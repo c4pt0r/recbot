@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         goos: [linux, darwin]
-        goarch: [amd64, x86_64, arm64]
+        goarch: [amd64, arm64]
     steps:
     - uses: actions/checkout@v3
     - uses: wangyoucao577/go-release-action@master
