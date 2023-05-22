@@ -17,11 +17,18 @@
 package main
 
 import (
+	"bytes"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/c4pt0r/log"
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -30,35 +37,76 @@ var (
 	token   = flag.String("tgbot-token", "", "Telegram bot token")
 	debug   = flag.Bool("debug", false, "Enable debug mode")
 	tidbDSN = flag.String("tidb-dsn", "root@tcp(", "TiDB DSN")
+	flushDB = flag.Bool("flush-db", false, "flush database")
+)
+
+var (
+	summaryCommand string = "curl -s %s | strip-tags | ttok -t 4000  | llm --system '用中文总结，并将总结的内容以要点列表返回'"
 )
 
 var db *sql.DB
 
+func createTables(db *sql.DB) error {
+	// create table if not exists
+	stmt := `CREATE TABLE IF NOT EXISTS recbot (
+		id INT NOT NULL AUTO_INCREMENT,
+		chat_id BIGINT NOT NULL,
+		content JSON NOT NULL, 
+		reply BLOB DEFAULT NULL,
+		create_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		KEY(create_at),
+		PRIMARY KEY (id))
+		`
+	_, err := db.Exec(stmt)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func initDB() {
 	var err error
+	mysql.RegisterTLSConfig("tidb", &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		// FIXME
+		ServerName: "gateway01.us-west-2.prod.aws.tidbcloud.com",
+	})
+
 	db, err = sql.Open("mysql", *tidbDSN)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// create table if not exists
-	stmt := `CREATE TABLE IF NOT EXISTS recbot (
-		id INT NOT NULL AUTO_INCREMENT,
-		content JSON NOT NULL,
-		create_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		KEY(create_at),
-		PRIMARY KEY (id))
-		`
-	_, err = db.Exec(stmt)
-	if err != nil {
-		log.Fatal(err)
+	if *flushDB {
+		_, err = db.Exec("DROP TABLE IF EXISTS recbot")
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("your call")
+		os.Exit(0)
+	} else {
+		createTables(db)
 	}
+}
+
+func executeOsCommand(command string) (string, error) {
+	// run shell command and return the stdout
+	cmd := exec.Command("bash", "-c", command)
+	// set exec os env
+	cmd.Env = os.Environ()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	return out.String(), nil
 }
 
 func insertMessage(msg *tgbotapi.Message) error {
 	b, _ := json.Marshal(msg)
-	stmt := `INSERT INTO recbot (content) VALUES (?)`
-	_, err := db.Exec(stmt, b)
+	stmt := `INSERT INTO recbot (content, chat_id) VALUES (?, ?)`
+	_, err := db.Exec(stmt, b, msg.Chat.ID)
 	return err
 }
 
@@ -76,6 +124,13 @@ func isMention(update *tgbotapi.Update, who string) bool {
 
 func isPrivateMessage(update *tgbotapi.Update) bool {
 	return update.Message.Chat.Type == "private"
+}
+
+func isURL(msg string) bool {
+	if strings.HasPrefix(msg, "http://") || strings.HasPrefix(msg, "https://") {
+		return true
+	}
+	return false
 }
 
 func main() {
@@ -115,6 +170,20 @@ func main() {
 		if err != nil {
 			log.Error(err)
 		}
-		bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "ACK"))
+		// DO your work
+		bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Recieved...and thinking..."))
+		go func(update tgbotapi.Update) {
+			if isURL(update.Message.Text) {
+				out, err := executeOsCommand(fmt.Sprintf(summaryCommand, update.Message.Text))
+				if err != nil {
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, err.Error()))
+				} else {
+					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, out))
+				}
+			} else {
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "I don't know what you are talking about, I only accept an URL"))
+			}
+		}(update)
+
 	}
 }
