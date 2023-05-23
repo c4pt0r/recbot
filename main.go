@@ -103,10 +103,23 @@ func executeOsCommand(command string) (string, error) {
 	return out.String(), nil
 }
 
-func insertMessage(msg *tgbotapi.Message) error {
+func insertMessage(msg *tgbotapi.Message) (int64, error) {
 	b, _ := json.Marshal(msg)
 	stmt := `INSERT INTO recbot (content, chat_id) VALUES (?, ?)`
-	_, err := db.Exec(stmt, b, msg.Chat.ID)
+	ret, err := db.Exec(stmt, b, msg.Chat.ID)
+	if err != nil {
+		return -1, err
+	}
+	lastInsertID, err := ret.LastInsertId()
+	if err != nil {
+		return -1, err
+	}
+	return lastInsertID, err
+}
+
+func updateMessage(id int64, reply string) error {
+	stmt := `UPDATE recbot SET reply = ? WHERE id = ?`
+	_, err := db.Exec(stmt, reply, id)
 	return err
 }
 
@@ -166,24 +179,25 @@ func main() {
 			(!isPrivateMessage(&update) && !isMention(&update, me.String())) {
 			continue
 		}
-		err := insertMessage(update.Message)
+		msgID, err := insertMessage(update.Message)
 		if err != nil {
 			log.Error(err)
 		}
 		// DO your work
 		bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Recieved...and thinking..."))
-		go func(update tgbotapi.Update) {
+		go func(update tgbotapi.Update, msgID int64) {
 			if isURL(update.Message.Text) {
 				out, err := executeOsCommand(fmt.Sprintf(summaryCommand, update.Message.Text))
 				if err != nil {
 					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, err.Error()))
+					updateMessage(msgID, out)
 				} else {
 					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, out))
 				}
 			} else {
 				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "I don't know what you are talking about, I only accept an URL"))
 			}
-		}(update)
+		}(update, msgID)
 
 	}
 }
