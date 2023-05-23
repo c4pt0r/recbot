@@ -190,9 +190,9 @@ func main() {
 				out, err := executeOsCommand(fmt.Sprintf(summaryCommand, update.Message.Text))
 				if err != nil {
 					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, err.Error()))
-					updateMessage(msgID, out)
 				} else {
 					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, out))
+					updateMessage(msgID, out)
 				}
 			} else {
 				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "I don't know what you are talking about, I only accept an URL"))
