@@ -42,6 +42,8 @@ var (
 
 var (
 	summaryCommand string = "curl -s %s | strip-tags | ttok -t 4000  | llm --system '用中文总结，并将总结的内容以要点列表返回'"
+
+	askGptCommand string = "llm"
 )
 
 var db *sql.DB
@@ -89,12 +91,15 @@ func initDB() {
 	}
 }
 
-func executeOsCommand(command string) (string, error) {
+func executeOsCommand(command string, stdinContent []byte) (string, error) {
 	// run shell command and return the stdout
 	cmd := exec.Command("bash", "-c", command)
 	// set exec os env
 	cmd.Env = os.Environ()
 	var out bytes.Buffer
+	if stdinContent != nil {
+		cmd.Stdin = bytes.NewReader(stdinContent)
+	}
 	cmd.Stdout = &out
 	err := cmd.Run()
 	if err != nil {
@@ -186,16 +191,18 @@ func main() {
 		// DO your work
 		bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Recieved...and thinking..."))
 		go func(update tgbotapi.Update, msgID int64) {
+			var out string
+			var err error
 			if isURL(update.Message.Text) {
-				out, err := executeOsCommand(fmt.Sprintf(summaryCommand, update.Message.Text))
-				if err != nil {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, err.Error()))
-				} else {
-					bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, out))
-					updateMessage(msgID, out)
-				}
+				out, err = executeOsCommand(fmt.Sprintf(summaryCommand, update.Message.Text), nil)
 			} else {
-				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "I don't know what you are talking about, I only accept an URL"))
+				out, err = executeOsCommand(askGptCommand, []byte(update.Message.Text))
+			}
+			if err != nil {
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, err.Error()))
+			} else {
+				bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, out))
+				updateMessage(msgID, out)
 			}
 		}(update, msgID)
 
