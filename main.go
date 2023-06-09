@@ -189,7 +189,8 @@ func main() {
 			log.Error(err)
 		}
 		// DO your work
-		bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "Recieved...and thinking..."))
+		action := tgbotapi.NewChatAction(update.Message.Chat.ID, tgbotapi.ChatTyping)
+		bot.Send(action)
 		go func(update tgbotapi.Update, msgID int64) {
 			var out string
 			var err error
